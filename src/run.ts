@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-exports.timeseries = [
-  {
-    "timestamp": "2015-09-12T00:46:00.000Z",
-    "result": {
-      "__VALUE__": 38164.49404386297,
-      "!Theta___VALUE__": 38164.49404386297
-    }
-  }
-];
+import { run, parseArguments } from './cli';
+
+run(parseArguments())
+  .catch(function(e) {
+    console.error(e.message);
+    process.exit(1);
+  })
+  .done();

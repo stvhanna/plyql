@@ -2,6 +2,77 @@
 
 For updates follow [@implydata](https://twitter.com/implydata) on Twitter.
 
+## 0.9.14
+
+- Added support for `SHOW CHARACTER SET`
+- Added support for `SHOW COLLATION`
+
+## 0.9.13
+
+- Support for encoding defined string literals (e.g. `N'lol'`, `_utf8'lol'`)
+
+## 0.9.12
+
+- Minor fix
+
+## 0.9.11
+
+- Fixed `realpath` / `readlink -f` for good (maybe) 
+
+## 0.9.10
+
+- `--timezone` option now affects the output timezone also
+- `realpath` -> `readlink -f` (I hate shell scripts)
+
+## 0.9.9
+
+- Added missing realpath
+
+## 0.9.8
+
+- Added better node lookup to handle either `node` or `nodejs` for the Debian people
+
+## 0.9.7
+
+- Added `--custom-aggregations` option: A JSON string defining custom aggregations
+- Added `--custom-transforms` option: A JSON string defining custom transforms
+- Added ability to load `--druid-context` from file using `@filename` notation
+
+## 0.9.6
+
+- Plywood version bump
+
+## 0.9.5
+
+- Plywood version bump
+
+## 0.9.4
+
+- Plywood version bump
+
+## 0.9.3
+
+- Plywood version bump
+
+## 0.9.2
+
+- Updated to latest Plywood with misc bug fixes
+
+## 0.9.1
+
+- Using the brand new rebuilt Plywood
+- Fixes error in NOT having filter being ignored
+- Better type injection with TDI
+
+## 0.8.19
+
+- New plywood supports SHOW STATUS
+- Fix BETWEEN inclusiveness
+
+## 0.8.18
+
+- Support for QUARTER
+
 ## 0.8.17
 
 - Fixed case insensitivity bug in introspection queries

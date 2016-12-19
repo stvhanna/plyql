@@ -14,29 +14,51 @@
  * limitations under the License.
  */
 
-/// <reference path="../typings/nopt/nopt.d.ts" />
-/// <reference path="../typings/table/table.d.ts" />
-
 import * as fs from 'fs';
-import * as path from "path";
-import * as Q from 'q-tsc';
-import * as nopt from "nopt";
-import table, { getBorderCharacters } from 'table';
+import * as path from 'path';
+import * as hasOwnProp from 'has-own-prop';
+import * as Q from 'q';
+import * as nopt from 'nopt';
+import { table, getBorderCharacters } from 'table';
 
-import { Timezone, parseInterval } from "chronoshift";
+import { Timezone, parseInterval, isDate } from 'chronoshift';
 
 import { $, Expression, Datum, Dataset, PlywoodValue, TimeRange,
-  External, DruidExternal, AttributeJSs, SQLParse, version } from "plywood";
+  External, DruidExternal, AttributeJSs, SQLParse, version, Set } from 'plywood';
 
-import { properDruidRequesterFactory } from "./requester";
-import { executeSQLParse } from "./plyql-executor";
+import { properDruidRequesterFactory } from './requester';
+import { executeSQLParse } from './plyql-executor';
 
 import { getVariablesDataset } from './variables';
+import { getStatusDataset } from './status';
 import { addExternal, getSchemataDataset, getTablesDataset, getColumnsDataset } from './schema';
+import { getCharacterSetsDataset } from "./character-sets";
+import { getCollationsDataset } from "./collations";
 
-function formatNull(v: any): any {
+function formatValue(v: any, tz: Timezone): any {
   if (v == null) return 'NULL';
+  if (isDate(v)) return Timezone.formatDateWithTimezone(v, tz);
+  if (Set.isSet(v) || TimeRange.isTimeRange(v)) return v.toString(tz);
   return v;
+}
+
+function loadOrParseJSON(json: string): any {
+  if (typeof json === 'undefined') return null;
+  if (typeof json !== 'string') throw new TypeError(`load or parse must get a string`);
+
+  if (json[0] === '@') {
+    try {
+      json = fs.readFileSync(json.substr(1), 'utf-8');
+    } catch (e) {
+      throw new Error(`can not load: ${json}`);
+    }
+  }
+
+  try {
+    return JSON.parse(json);
+  } catch (e) {
+    throw new Error(`can not parse: ${json}`);
+  }
 }
 
 function printUsage() {
@@ -73,6 +95,8 @@ Arguments:
       --experimental-mysql-gateway [Experimental] the port on which to start the MySQL gateway server
 
       --druid-version            Assume this is the Druid version and do not query it
+      --custom-aggregations      A JSON string defining custom aggregations
+      --custom-transforms        A JSON string defining custom transforms
       --druid-context            A JSON string representing the Druid context to use
       --skip-cache               disable Druid caching
       --introspection-strategy   Druid introspection strategy
@@ -92,9 +116,10 @@ Arguments:
 }
 
 function printVersion(): void {
-  var cliPackageFilename = path.join(__dirname, '..', 'package.json');
+  let cliPackageFilename = path.join(__dirname, '..', 'package.json');
+  let cliPackage: any;
   try {
-    var cliPackage = JSON.parse(fs.readFileSync(cliPackageFilename, 'utf8'));
+    cliPackage = JSON.parse(fs.readFileSync(cliPackageFilename, 'utf8'));
   } catch (e) {
     console.log("could not read cli package", e.message);
     return;
@@ -126,6 +151,8 @@ export interface CommandLineArguments {
   "force-theta"?: string[];
   "force-histogram"?: string[];
   "druid-version"?: string;
+  "custom-aggregations"?: string;
+  "custom-transforms"?: string;
   "druid-context"?: string;
   "druid-time-attribute"?: string;
   "rollup"?: boolean;
@@ -163,6 +190,8 @@ export function parseArguments(): CommandLineArguments {
       "force-theta": [String, Array],
       "force-histogram": [String, Array],
       "druid-version": String,
+      "custom-aggregations": String,
+      "custom-transforms": String,
       "druid-context": String,
       "druid-time-attribute": String,
       "rollup": Boolean,
@@ -197,77 +226,72 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
       return null;
     }
 
-    var verbose: boolean = parsed['verbose'];
+    let verbose: boolean = parsed['verbose'];
     if (verbose) printVersion();
 
     // Get forced attribute overrides
-    var attributeOverrides: AttributeJSs = [];
+    let attributeOverrides: AttributeJSs = [];
 
-    var forceTime: string[] = parsed['force-time'] || [];
+    let forceTime: string[] = parsed['force-time'] || [];
     for (let attributeName of forceTime) {
       attributeOverrides.push({ name: attributeName, type: 'TIME' });
     }
 
-    var forceBoolean: string[] = parsed['force-boolean'] || [];
+    let forceBoolean: string[] = parsed['force-boolean'] || [];
     for (let attributeName of forceBoolean) {
       attributeOverrides.push({ name: attributeName, type: 'BOOLEAN' });
     }
 
-    var forceNumber: string[] = parsed['force-number'] || [];
+    let forceNumber: string[] = parsed['force-number'] || [];
     for (let attributeName of forceNumber) {
       attributeOverrides.push({ name: attributeName, type: 'NUMBER' });
     }
 
-    var forceUnique: string[] = parsed['force-unique'] || [];
+    let forceUnique: string[] = parsed['force-unique'] || [];
     for (let attributeName of forceUnique) {
       attributeOverrides.push({ name: attributeName, special: 'unique' });
     }
 
-    var forceTheta: string[] = parsed['force-theta'] || [];
+    let forceTheta: string[] = parsed['force-theta'] || [];
     for (let attributeName of forceTheta) {
       attributeOverrides.push({ name: attributeName, special: 'theta' });
     }
 
-    var forceHistogram: string[] = parsed['force-histogram'] || [];
+    let forceHistogram: string[] = parsed['force-histogram'] || [];
     for (let attributeName of forceHistogram) {
       attributeOverrides.push({ name: attributeName, special: 'histogram' });
     }
 
     // Get output
-    var output: string = (parsed['output'] || 'table').toLowerCase();
+    let output: string = (parsed['output'] || 'table').toLowerCase();
     if (output !== 'table' && output !== 'json' && output !== 'csv' && output !== 'tsv' && output !== 'flat') {
       throw new Error(`output must be one of table, json, csv, tsv, or flat (is ${output})`);
     }
 
     // Get host
-    var host: string = parsed['druid'] || parsed['host'];
+    let host: string = parsed['druid'] || parsed['host'];
     if (!host) {
       throw new Error("must have a host");
     }
 
     // Get version
-    var explicitDruidVersion: string = parsed['druid-version'];
+    let explicitDruidVersion: string = parsed['druid-version'];
 
-    var timezone = Timezone.UTC;
+    let timezone = Timezone.UTC;
     if (parsed['timezone']) {
       timezone = Timezone.fromJS(parsed['timezone']);
     }
 
-    var timeout: number = parsed.hasOwnProperty('timeout') ? parsed['timeout'] : 180000;
-    var retry: number = parsed.hasOwnProperty('retry') ? parsed['retry'] : 2;
-    var concurrent: number = parsed.hasOwnProperty('concurrent') ? parsed['concurrent'] : 2;
+    let timeout: number = hasOwnProp(parsed, 'timeout') ? parsed['timeout'] : 180000;
+    let retry: number = hasOwnProp(parsed, 'retry') ? parsed['retry'] : 2;
+    let concurrent: number = hasOwnProp(parsed, 'concurrent') ? parsed['concurrent'] : 2;
 
-    // Druid Context
-    var druidContext: Druid.Context = {};
-    if (parsed.hasOwnProperty('druid-context')) {
-      try {
-        // Parse the parsed!
-        druidContext = JSON.parse(parsed['druid-context']);
-      } catch (e) {
-        throw new Error(`can not parse druid-context as JSON ${parsed['druid-context']})`);
-      }
-    }
+    let customAggregations: any = loadOrParseJSON(parsed['custom-aggregations']);
+    let customTransforms: any = loadOrParseJSON(parsed['custom-transforms']);
 
+    // Druid Context ---------------------------
+
+    let druidContext: Druid.Context = loadOrParseJSON(parsed['druid-context']) || {};
     druidContext.timeout = timeout;
 
     if (parsed['skip-cache']) {
@@ -275,14 +299,15 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
       druidContext.populateCache = false;
     }
 
-    var timeAttribute = parsed['druid-time-attribute'] || '__time';
+    let timeAttribute = parsed['druid-time-attribute'] || '__time';
 
-    var filter: Expression = null;
-    var intervalString: string = parsed['interval'];
+    let filter: Expression = null;
+    let intervalString: string = parsed['interval'];
     if (intervalString) {
+      let interval: TimeRange;
       try {
-        var { computedStart, computedEnd } = parseInterval(intervalString, timezone);
-        var interval = TimeRange.fromJS({ start: computedStart, end: computedEnd });
+        let { computedStart, computedEnd } = parseInterval(intervalString, timezone);
+        interval = TimeRange.fromJS({ start: computedStart, end: computedEnd });
       } catch (e) {
         throw new Error(`Could not parse interval: ${intervalString}`);
       }
@@ -290,16 +315,16 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
       filter = $(timeAttribute).in(interval);
     }
 
-    var masterSource = parsed['source'] || parsed['data-source'] || null;
+    let masterSource = parsed['source'] || parsed['data-source'] || null;
 
     // Get SQL
     if (Number(!!parsed['query']) + Number(!!parsed['json-server']) + Number(!!parsed['experimental-mysql-gateway']) > 1) {
       throw new Error("must set exactly one of --query (-q), --json-server, or --experimental-mysql-gateway");
     }
 
-    var mode: Mode;
-    var sqlParse: SQLParse;
-    var serverPort: number;
+    let mode: Mode;
+    let sqlParse: SQLParse;
+    let serverPort: number;
     if (parsed['query']) {
       mode = 'query';
       let query: string = parsed['query'];
@@ -339,7 +364,7 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
 
     // ============== End parse ===============
 
-    var requester = properDruidRequesterFactory({
+    let requester = properDruidRequesterFactory({
       druidHost: host,
       retry,
       timeout,
@@ -349,22 +374,29 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
 
     // ============== Do introspect ===============
 
-    var contextPromise = (explicitDruidVersion ? Q(explicitDruidVersion) : DruidExternal.getVersion(requester))
+    let contextPromise = (explicitDruidVersion ? Q(explicitDruidVersion) : DruidExternal.getVersion(requester))
       .then(druidVersion => {
-        var onlyDataSource = masterSource || (sqlParse ? sqlParse.table : null);
-        var sourceList = onlyDataSource ? Q([onlyDataSource]) : DruidExternal.getSourceList(requester);
+        let onlyDataSource = masterSource || (sqlParse ? sqlParse.table : null);
+        let sourceList = onlyDataSource ? Q([onlyDataSource]) : DruidExternal.getSourceList(requester);
 
         return sourceList.then((sources) => {
           if (verbose && !onlyDataSource) {
             console.log(`Found sources [${sources.join(',')}]`);
           }
 
-          var context: Datum = {};
+          let context: Datum = {};
 
           if (mode === 'gateway') {
-            var variablesDataset = getVariablesDataset();
+            let variablesDataset = getVariablesDataset();
             context['GLOBAL_VARIABLES'] = variablesDataset;
             context['SESSION_VARIABLES'] = variablesDataset;
+
+            let statusDataset = getStatusDataset();
+            context['GLOBAL_STATUS'] = statusDataset;
+            context['SESSION_STATUS'] = statusDataset;
+
+            context['CHARACTER_SETS'] = getCharacterSetsDataset();
+            context['COLLATIONS'] = getCollationsDataset();
           }
 
           return Q.all(sources.map(source => {
@@ -378,6 +410,8 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
               allowSelectQueries: true,
               introspectionStrategy: parsed['introspection-strategy'],
               context: druidContext,
+              customAggregations,
+              customTransforms,
               filter,
               attributeOverrides
             }, requester)
@@ -385,7 +419,7 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
           }))
             .then((introspectedExternals) => {
               introspectedExternals.forEach((introspectedExternal) => {
-                var source = introspectedExternal.source as string;
+                let source = introspectedExternal.source as string;
                 context[source] = introspectedExternal;
                 addExternal(source, introspectedExternal, mode === 'gateway');
               });
@@ -410,17 +444,17 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
         case 'query':
           return executeSQLParse(sqlParse, context, timezone)
             .then((data: PlywoodValue) => {
-              var outputStr = '';
+              let outputStr = '';
               if (Dataset.isDataset(data)) {
-                var dataset = <Dataset>data;
+                let dataset = <Dataset>data;
                 switch (output) {
                   case 'table':
-                    var columns = dataset.getColumns();
-                    var flatData = dataset.flatten();
-                    var columnNames = columns.map(c => c.name);
+                    let columns = dataset.getColumns();
+                    let flatData = dataset.flatten();
+                    let columnNames = columns.map(c => c.name);
 
                     if (columnNames.length) {
-                      var tableData = [columnNames].concat(flatData.map(flatDatum => columnNames.map(cn => formatNull(flatDatum[cn]))));
+                      let tableData = [columnNames].concat(flatData.map(flatDatum => columnNames.map(cn => formatValue(flatDatum[cn], timezone))));
 
                       outputStr = table(tableData, {
                         border: getBorderCharacters('norc'),
@@ -434,11 +468,11 @@ export function run(parsed: CommandLineArguments): Q.Promise<any> {
                     break;
 
                   case 'csv':
-                    outputStr = dataset.toCSV({ finalLineBreak: 'include' });
+                    outputStr = dataset.toCSV({ finalLineBreak: 'include', timezone });
                     break;
 
                   case 'tsv':
-                    outputStr = dataset.toTSV({ finalLineBreak: 'include' });
+                    outputStr = dataset.toTSV({ finalLineBreak: 'include', timezone });
                     break;
 
                   case 'flat':

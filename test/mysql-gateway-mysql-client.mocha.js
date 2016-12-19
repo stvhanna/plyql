@@ -19,13 +19,22 @@ const { spawn, exec } = require('child_process');
 const { sane } = require('./utils/utils.js');
 const spawnServer = require('node-spawn-server');
 
-var TEST_PORT = 13307;
-var CONN = `--host=127.0.0.1 --port=${TEST_PORT}`;
+const TEST_PORT = 13307;
+const CONN = `--host=127.0.0.1 --port=${TEST_PORT}`;
 //CONN = `--host=192.168.99.100 -u root`; // Real datazoo MySQL
 
-var child;
+let child;
 
-describe.only('mysql-gateway-mysql-client', function() {
+const assert = (name, query, stdOutFn, complete) => {
+  exec(`mysql ${CONN} -e "${query}"`, (error, stdout, stderr) => {
+    expect(error, name).to.equal(null);
+    expect(stdOutFn(stdout), name).to.equal(true);
+    expect(stderr, name).to.equal('');
+    if (complete) complete();
+  });
+};
+
+describe('mysql-gateway-mysql-client', function() {
   before((done) => {
     child = spawnServer(`bin/plyql -h 192.168.99.100 --experimental-mysql-gateway ${TEST_PORT}`);
     child.onHook(`port: ${TEST_PORT}`, done);
@@ -56,6 +65,43 @@ describe.only('mysql-gateway-mysql-client', function() {
     exec(`mysql ${CONN} -e 'SELECT 2=2'`, (error, stdout, stderr) => {
       expect(error).to.equal(null);
       expect(stdout).to.contain('1');
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+  it('does a show status query', (testComplete) => {
+    exec(`mysql ${CONN} -e 'SHOW SESSION STATUS LIKE "Ssl_cipher"'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain('Ssl_cipher');
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+  it('does a show character set query', (testComplete) => {
+    exec(`mysql ${CONN} -e 'SHOW CHARACTER SET LIKE "%utf%"'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain('Charset	Default collation	Description	Maxlen');
+      expect(stdout).to.contain('utf8	utf8_general_ci	UTF-8 Unicode	3');
+      expect(stdout).to.contain('utf8mb4	utf8mb4_general_ci	UTF-8 Unicode	4');
+      expect(stdout).to.contain('utf16	utf16_general_ci	UTF-16 Unicode	4');
+      expect(stdout).to.contain('utf16le	utf16le_general_ci	UTF-16LE Unicode	4');
+      expect(stdout).to.contain('utf32	utf32_general_ci	UTF-32 Unicode	4');
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+  it('does a show collation query', (testComplete) => {
+    exec(`mysql ${CONN} -e 'SHOW COLLATION like "%latin1%"'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain('Collation	Charset	Id	Default	Compiled	Sortlen');
+      expect(stdout).to.contain('latin1_german1_ci	latin1	5		Yes	1');
+      expect(stdout).to.contain('latin1_swedish_ci	latin1	8	Yes	Yes	1');
+      expect(stdout).to.contain('latin1_danish_ci	latin1	15		Yes	1');
+      expect(stdout).to.contain('latin1_german2_ci	latin1	31		Yes	2');
+      expect(stdout).to.contain('latin1_bin	latin1	47		Yes	1');
       expect(stderr).to.equal('');
       testComplete();
     });
@@ -95,42 +141,33 @@ describe.only('mysql-gateway-mysql-client', function() {
     });
   });
 
-  var assert = (name, query, stdOutFn, complete) => {
-    exec(`mysql ${CONN} -e "${query}"`, (error, stdout, stderr) => {
-      expect(error, name).to.equal(null);
-      expect(stdOutFn(stdout), name).to.equal(true);
-      expect(stderr, name).to.equal('');
-      if (complete) complete();
-    });
-  };
-
   it('regression tests, information schema', (testComplete) => {
-    var query1 = sane`
+    let query1 = sane`
       SELECT table_name, column_name
       FROM information_schema.COLUMNS
       WHERE data_type='' AND table_schema=''
     `;
-    var query2 = sane`
+    let query2 = sane`
       SELECT table_name, column_name
       FROM information_schema.COLUMNS
       WHERE data_type='enum' AND table_schema='plyql1'
     `;
 
-    var query2Lower = sane`
+    let query2Lower = sane`
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE data_type='enum' AND table_schema='plyql1'
     `;
 
-    var query3 = sane`
+    let query3 = sane`
       SELECT table_collation FROM information_schema.TABLES WHERE table_name='wikipedia'
     `;
 
-    var query3Lower = sane`
+    let query3Lower = sane`
       SELECT table_collation FROM information_schema.tables WHERE table_name='wikipedia'
     `;
 
-    var query4 = sane`
+    let query4 = sane`
       DESCRIBE wikipedia
     `;
 
@@ -147,8 +184,8 @@ describe.only('mysql-gateway-mysql-client', function() {
     }, testComplete)
   });
 
-  it.skip('quarters', (testComplete) => {
-    var quarter = sane`
+  it('quarters basic', (testComplete) => {
+    let quarter = sane`
       SELECT QUARTER(wikipedia.__time) AS qr___time_ok,
       SUM(wikipedia.added) AS sum_added_ok
       FROM wikipedia
@@ -159,17 +196,86 @@ describe.only('mysql-gateway-mysql-client', function() {
       qr___time_ok	sum_added_ok
       3	97393744
       `) !== -1, testComplete);
+  });
 
-    var quarterWithYear = sane`
-    SELECT SUM(wikipedia.added) AS sum_added_ok,
-    ADDDATE( CONCAT(
-              DATE_FORMAT( wikipedia.__time, '%Y-' ),
-              (3*(QUARTER(wikipedia.__time)-1)+1), '-01 00:00:00' ),
-              INTERVAL 0 SECOND )
-      AS tqr___time_ok
-    FROM wikipedia
-    GROUP BY 2
+  it('quarters fancy', (testComplete) => {
+    let quarterWithYear = sane`
+      SELECT SUM(wikipedia.added) AS sum_added_ok,
+      ADDDATE( CONCAT(
+                DATE_FORMAT( wikipedia.__time, '%Y-' ),
+                (3*(QUARTER(wikipedia.__time)-1)+1), '-01 00:00:00' ),
+                INTERVAL 0 SECOND )
+        AS tqr___time_ok
+      FROM wikipedia
+      GROUP BY 2
     `;
+
+    assert('quarterWithYear', quarterWithYear, (stdOut) => stdOut.indexOf(sane`
+      2015-07-01 00:00:00
+      `) !== -1, testComplete);
+  });
+
+  it('timezone display basic (no tz provided)', (testComplete) => {
+    let query = sane`
+      SELECT max(__time) from wikipedia
+     `;
+
+    assert('respects timezones (no tz provided)', query, (stdOut) => stdOut.indexOf(sane`
+        max(__time)
+        2015-09-12 23:59:00
+      `) !== -1, testComplete
+    );
+  });
+
+  it('timezone display range (no tz provided)', (testComplete) => {
+    let query = sane`
+      SELECT TIME_BUCKET(__time, 'P1D') AS V from wikipedia GROUP BY 1
+     `;
+
+    assert('respects timezones (no tz provided)', query, (stdOut) => stdOut.indexOf(sane`
+        V
+        2015-09-12 00:00:00
+      `) !== -1, testComplete
+    );
+  });
+
+  after(() => {
+    child.kill('SIGHUP');
+  });
+
+});
+
+describe('timezones', function() {
+  this.timeout(50000);
+  before((done) => {
+    child = spawnServer(`bin/plyql -h 192.168.99.100 -Z Asia/Kathmandu --experimental-mysql-gateway ${TEST_PORT}`);
+    child.onHook(`port: ${TEST_PORT}`, done);
+ });
+
+
+  it('timezone display basic (tz different from above)', (testComplete) => {
+    let query = sane`
+      SELECT max(__time) from wikipedia
+     `;
+
+    assert('respects timezones (different from above)', query, (stdOut) => stdOut.indexOf(sane`
+        max(__time)
+        2015-09-13 05:44:00
+      `) !== -1, testComplete
+    );
+  });
+
+  it('timezone display range (tz different from above)', (testComplete) => {
+    let query = sane`
+      SELECT TIME_BUCKET(__time, 'P1D') AS V from wikipedia GROUP BY 1
+     `;
+
+    assert('respects timezones (different from above)', query, (stdOut) => stdOut.indexOf(sane`
+        V
+        2015-09-12 00:00:00
+        2015-09-13 00:00:00
+      `) !== -1, testComplete
+    );
   });
 
   after(() => {

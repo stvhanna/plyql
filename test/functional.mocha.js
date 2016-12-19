@@ -21,7 +21,9 @@ const Q = require('q');
 
 const druidHost = '192.168.99.100';
 
-describe('query', () => {
+describe('query', function() {
+  this.timeout(5000);
+
   it('does basic query', (testComplete) => {
     exec(`bin/plyql -h ${druidHost} -q 'SELECT 1+1'`, (error, stdout, stderr) => {
       expect(error).to.equal(null);
@@ -70,7 +72,11 @@ describe('query', () => {
   it('does a SELECT query with empty result', (testComplete) => {
     exec(`bin/plyql -h ${druidHost} -q 'SELECT page, SUM(count) AS 'Count' FROM wikipedia WHERE channel = "blah" GROUP BY page ORDER BY Count DESC LIMIT 3;'`, (error, stdout, stderr) => {
       expect(error).to.equal(null);
-      expect(stdout).to.equal('\n');
+      expect(stdout).to.contain(sane`
+        ┌──────┬───────┐
+        │ page │ Count │
+        └──────┴───────┘
+      `);
       expect(stderr).to.equal('');
       testComplete();
     });
@@ -134,6 +140,62 @@ describe('query', () => {
     });
   });
 
+  it('respects timezone display for table', (testComplete) => {
+    exec(`bin/plyql -h ${druidHost} -Z "America/Los_Angeles" -o table -q 'SELECT TIMESTAMP("2016-04-04T01:02:03") AS T'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain(sane`
+        ┌───────────────────────────┐
+        │ T                         │
+        ├───────────────────────────┤
+        │ 2016-04-04T01:02:03-07:00 │
+        └───────────────────────────┘
+
+      `);
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+  it('respects timezone display of range for table', (testComplete) => {
+    exec(`bin/plyql -h ${druidHost} -Z "America/Los_Angeles" -o table -q 'SELECT TIME_RANGE(TIMESTAMP("2016-04-04T01:02:03"), P2D) AS T'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain(sane`
+        ┌───────────────────────────────────────────────────────┐
+        │ T                                                     │
+        ├───────────────────────────────────────────────────────┤
+        │ [2016-04-04T01:02:03-07:00,2016-04-06T01:02:03-07:00] │
+        └───────────────────────────────────────────────────────┘
+
+      `);
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+  it('respects timezone display for csv', (testComplete) => {
+    exec(`bin/plyql -h ${druidHost} -Z "Asia/Kathmandu" -o csv -q 'SELECT TIMESTAMP("2016-04-04T01:02:03") AS T'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain(sane`
+      2016-04-04T01:02:03+05:45
+    `);
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+
+  it('respects timezone display for tsv', (testComplete) => {
+    exec(`bin/plyql -h ${druidHost} -Z "Asia/Kathmandu" -o tsv -q 'SELECT TIMESTAMP("2016-04-04T01:02:03") AS T'`, (error, stdout, stderr) => {
+      expect(error).to.equal(null);
+      expect(stdout).to.contain(sane`
+      2016-04-04T01:02:03+05:45
+    `);
+      expect(stderr).to.equal('');
+      testComplete();
+    });
+  });
+
+
   it('passes in a custom druid context', (testComplete) => {
     exec(`bin/plyql -h ${druidHost} -v --druid-context '{"lol":1}' -q "SELECT COUNT(DISTINCT user_theta) FROM wikipedia";`, (error, stdout, stderr) => {
       expect(error).to.equal(null);
@@ -190,6 +252,54 @@ describe('query', () => {
         └────────────┴─────────────────────────────────┘
       `)}
     )
+  );
+
+  it('respects bounds', () => Q.nfcall(exec,
+    `bin/plyql -h ${druidHost} -q 'SELECT count(*) FROM wikipedia WHERE __time BETWEEN "2015-09-12 00:46:00" AND "2015-09-12 00:48:00"'`
+    ).then((res) => {
+      expect(res[0]).to.contain('409')
+    })
+  );
+
+  it('works with custom transforms from command line', () => {
+    // Note: String.fromCharCode(46) === "." and String.fromCharCode() === ""
+    // Figuring out escaping is too hard
+    let ct = `{
+      "dotify": {
+        "extractionFn": {
+          "type": "javascript",
+          "function": "function(v) { return String(v).split(String.fromCharCode()).join(String.fromCharCode(46)); }"
+        }
+      }
+    }`;
+
+    return Q.nfcall(exec,
+        `bin/plyql -h ${druidHost} --custom-transforms '${ct}' -q 'SELECT CUSTOM_TRANSFORM(page, dotify) FROM wikipedia GROUP BY 1 LIMIT 5'`
+      )
+      .then((res) => {
+        expect(res[0]).to.contain(".T.h.e. .S.e.c.r.e.t. .L.i.f.e. .o.f.......");
+      })
+    }
+  );
+
+  it('works with custom transforms from file', () => {
+      return Q.nfcall(exec,
+        `bin/plyql -h ${druidHost} --custom-transforms @test/utils/custom/fancy-transforms.json -q 'SELECT CUSTOM_TRANSFORM(page, dotify) FROM wikipedia GROUP BY 1 LIMIT 5'`
+      )
+        .then((res) => {
+          expect(res[0]).to.contain(".T.h.e. .S.e.c.r.e.t. .L.i.f.e. .o.f.......");
+        })
+    }
+  );
+
+  it('works with custom aggregations from file', () => {
+      return Q.nfcall(exec,
+        `bin/plyql -h ${druidHost} --custom-aggregations @test/utils/custom/fancy-aggregations.json -q 'SELECT channel, CUSTOM_AGGREGATE("addedMod1337") FROM wikipedia GROUP BY 1 LIMIT 5'`
+      )
+        .then((res) => {
+          expect(res[0]).to.contain("1097");
+        })
+    }
   );
 
 });
