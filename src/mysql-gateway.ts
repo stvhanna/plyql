@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016 Imply Data, Inc.
+ * Copyright 2015-2017 Imply Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@ import * as moment from 'moment-timezone';
 import { Timezone } from 'chronoshift';
 import { Dataset, PlyType } from "plywood";
 import * as mysql from 'vogievetsky-mysql2';
-const TYPES: Lookup<number> = require('vogievetsky-mysql2/lib/constants/types');
-const CHARSETS: Lookup<number> = require('vogievetsky-mysql2/lib/constants/charsets');
-const CLIENT: Lookup<number> = require('vogievetsky-mysql2/lib/constants/client');
+const TYPES: Record<string, number> = require('vogievetsky-mysql2/lib/constants/types');
+const CHARSETS: Record<string, number> = require('vogievetsky-mysql2/lib/constants/charsets');
+const CLIENT: Record<string, number> = require('vogievetsky-mysql2/lib/constants/client');
 
 const capabilityFlags = 0
   | CLIENT['LONG_PASSWORD']           /* new more secure passwords */
@@ -82,15 +82,6 @@ export function columnToMySQL(column: any, table: string) {
   }
 }
 
-export interface MySQLResult {
-  type: 'ok' | 'error' | 'dataset' | 'connectionId'
-  dataset?: Dataset;
-  table?: string;
-  name?: string;
-  code?: number;
-  message?: string;
-}
-
 export interface MySQLParameters {
   sql: string;
   connectionId: number;
@@ -104,6 +95,7 @@ export function createMySQLGateway(port: number, queryProcessor: MySQLQueryProce
   let server = mysql.createServer();
   server.listen(port);
   console.log(`MySQL Gateway listening on port: ${port}`);
+  console.log(`you can connect to it using \`mysql --host=127.0.0.1 --port=${port}\``);
 
   let connectionId = 0;
   server.on('connection', function(conn) {

@@ -2,6 +2,82 @@
 
 For updates follow [@implydata](https://twitter.com/implydata) on Twitter.
 
+## 0.11.2
+
+- New plywood handles more complex expressions
+
+## 0.11.1
+
+- New plywood handles DOUBLES
+
+## 0.11.0
+
+- New Plywood
+- Switch to await/async
+
+
+## 0.10.12
+
+- New Plywood fixes issues with spaces in `LOCATE` and `FALLBACK`
+
+## 0.10.11
+
+- `--force-number` can force columns to be interpreted as string
+- New plywood fixes `LOCATE`
+
+## 0.10.10
+
+- Update to latest plywood for no reason
+
+## 0.10.9
+
+- Update to latest plywood for no reason
+
+## 0.10.8
+
+- Update to latest plywood with tunable approx histogram
+
+## 0.10.7
+
+- And we're out of beta.
+- We're releasing on time!
+
+## 0.10.6
+
+- New plywood bring many fixes
+
+## 0.10.5
+
+- Fix control characters in table output
+
+## 0.10.4
+
+- New Plywood supports many new things
+- Support for `SELECT t.* FROM blah t`
+
+## 0.10.3
+
+- Added new plywood, including support for `CASE`, `IF`
+
+## 0.10.2
+
+- Included assets file
+
+## 0.10.1
+
+- Update to streaming Plywood
+- Added ability to use a socks proxy to connect to Druid via CLI arguments: `--socks-host`, `--socks-username`, `--socks-password`
+- Added `--group-by-v2` CLI flag which sets groupByStrategy to 'v2' in the context to ensure use of the V2 GroupBy engine  
+
+
+## 0.9.16
+
+- Update Plywood to not bug out on Druid 0.10.x
+
+## 0.9.15
+
+- Misc library updates
+
 ## 0.9.14
 
 - Added support for `SHOW CHARACTER SET`
